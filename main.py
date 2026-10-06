@@ -1,4 +1,5 @@
 import secrets
+import sqlite3
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import RedirectResponse
@@ -6,9 +7,19 @@ from pydantic import BaseModel
 
 app = FastAPI()
 
-# Short code -> original URL. Lives only in memory: resets whenever the
-# server restarts. Replacing this with a real database is the next milestone.
-links: dict[str, str] = {}
+DB_PATH = "links.db"
+
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS links (code TEXT PRIMARY KEY, url TEXT NOT NULL)"
+    )
+    conn.commit()
+    conn.close()
+
+
+init_db()
 
 
 class LinkRequest(BaseModel):
@@ -23,12 +34,18 @@ def read_root():
 @app.post("/shorten")
 def shorten_url(link: LinkRequest):
     code = secrets.token_urlsafe(4)
-    links[code] = link.url
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute("INSERT INTO links (code, url) VALUES (?, ?)", (code, link.url))
+    conn.commit()
+    conn.close()
     return {"code": code, "short_url": f"/{code}"}
 
 
 @app.get("/{code}")
 def redirect_to_url(code: str):
-    if code not in links:
+    conn = sqlite3.connect(DB_PATH)
+    row = conn.execute("SELECT url FROM links WHERE code = ?", (code,)).fetchone()
+    conn.close()
+    if row is None:
         raise HTTPException(status_code=404, detail="Short link not found")
-    return RedirectResponse(url=links[code])
+    return RedirectResponse(url=row[0])
